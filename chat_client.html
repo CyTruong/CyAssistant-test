@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CyAssistant Chat Client</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container { 
+            max-width: 800px; 
+            margin: 0 auto; 
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: #007bff;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .login-section, .chat-section { padding: 20px; }
+        .chat-section { display: none; }
+        input, button {
+            padding: 12px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            width: 100%;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .conversations-list {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .conversation-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+        }
+        .conversation-item:hover { background: #f8f9fa; }
+        .conversation-item.active { background: #e7f3ff; }
+        .messages-container {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 10px 0;
+            background: #fafafa;
+            border-radius: 5px;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px 15px;
+            border-radius: 15px;
+            max-width: 70%;
+            word-wrap: break-word;
+        }
+        .message.user {
+            background: #007bff;
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+        .message.bot {
+            background: #e9ecef;
+            color: #333;
+        }
+        .message-info {
+            font-size: 11px;
+            opacity: 0.7;
+            margin-top: 5px;
+        }
+        .typing-indicator {
+            display: none;
+            padding: 10px;
+            font-style: italic;
+            color: #666;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-size: 13px;
+        }
+        .status.success { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .status.info { background: #d1ecf1; color: #0c5460; }
+        .input-group {
+            display: flex;
+            gap: 10px;
+        }
+        .input-group input { flex: 1; }
+        .input-group button { width: auto; padding: 12px 30px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Test Assistant Chat</h1>
+            <p>Real-time Chat Assistant</p>
+        </div>
+
+        <!-- Login Section -->
+        <div class="login-section" id="loginSection">
+            <h3>Đăng nhập</h3>
+            <input type="text" id="phoneInput" placeholder="Số điện thoại (VD: 0987654321)" value="090123456789">
+            <button onclick="login()">Đăng nhập</button>
+            <div id="loginStatus"></div>
+        </div>
+
+        <!-- Chat Section -->
+        <div class="chat-section" id="chatSection">
+            <h3>Conversations</h3>
+            <button onclick="createConversation()">+ Tạo Conversation Mới</button>
+            <div class="conversations-list" id="conversationsList"></div>
+            
+            <h3 style="margin-top: 20px;">Chat</h3>
+            <div id="currentConversation" style="color: #666; margin: 10px 0;"></div>
+            <div class="messages-container" id="messagesContainer"></div>
+            <div class="typing-indicator" id="typingIndicator">Bot đang trả lời...</div>
+            
+            <div class="input-group">
+                <input type="text" id="messageInput" placeholder="Nhập tin nhắn..." 
+                       onkeypress="if(event.key==='Enter') sendMessage()">
+                <button onclick="sendMessage()" id="sendBtn">Gửi</button>
+            </div>
+            
+            <button onclick="logout()" style="margin-top: 10px; background: #dc3545;">Đăng xuất</button>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+        let token = null;
+        let currentConversationId = null;
+        let conversations = [];
+
+        function showStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('loginStatus');
+            statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+        }
+
+        async function login() {
+            const phone = document.getElementById('phoneInput').value.trim();
+            if (!phone) {
+                showStatus('Vui lòng nhập số điện thoại', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('https://9b46ded4ffb2.ngrok-free.app/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    token = data.token;
+                    showStatus(`Đăng nhập thành công! User: ${data.user.name}`, 'success');
+                    
+                    setTimeout(() => {
+                        document.getElementById('loginSection').style.display = 'none';
+                        document.getElementById('chatSection').style.display = 'block';
+                        connectWebSocket();
+                    }, 1000);
+                } else {
+                    showStatus(data.error || 'Đăng nhập thất bại', 'error');
+                }
+            } catch (error) {
+                showStatus('Lỗi kết nối: ' + error.message, 'error');
+            }
+        }
+
+        function connectWebSocket() {
+            socket = io('https://9b46ded4ffb2.ngrok-free.app', {
+                auth: { token: token }
+            });
+
+            socket.on('connected', (data) => {
+                console.log('WebSocket connected:', data);
+                loadConversations();
+            });
+
+            socket.on('error', (data) => {
+                alert('Lỗi: ' + data.message);
+            });
+
+            socket.on('conversations_list', (data) => {
+                conversations = data.conversations;
+                renderConversations();
+            });
+
+            socket.on('conversation_created', (conv) => {
+                conversations.unshift(conv);
+                renderConversations();
+                joinConversation(conv.id);
+            });
+
+            socket.on('conversation_history', (data) => {
+                renderMessages(data.messages);
+            });
+
+            socket.on('message_received', (data) => {
+                console.log('Message received:', data);
+            });
+
+            socket.on('bot_typing', (data) => {
+                console.log('Bot typing:', data);
+                document.getElementById('typingIndicator').style.display = 'block';
+            });
+
+            socket.on('bot_response', (data) => {
+                console.log('Bot response received:', data);
+                document.getElementById('typingIndicator').style.display = 'none';
+                if (data && data.message) {
+                    console.log('Adding bot message to UI:', data.message);
+                    addMessage(data.message);
+                } else {
+                    console.error('Invalid bot response format:', data);
+                }
+            });
+
+            socket.on('disconnect', () => {
+                console.log('WebSocket disconnected');
+            });
+        }
+
+        function loadConversations() {
+            socket.emit('get_conversations');
+        }
+
+        function renderConversations() {
+            const list = document.getElementById('conversationsList');
+            list.innerHTML = conversations.map(conv => `
+                <div class="conversation-item ${conv.id === currentConversationId ? 'active' : ''}" 
+                     onclick="joinConversation(${conv.id})">
+                    <strong>${conv.title}</strong><br>
+                    <small>${conv.message_count} tin nhắn - ${conv.updated_at}</small>
+                </div>
+            `).join('');
+        }
+
+        function createConversation() {
+            const title = prompt('Tên conversation:', 'New Conversation');
+            if (title) {
+                socket.emit('create_conversation', { title });
+            }
+        }
+
+        function joinConversation(convId) {
+            if (currentConversationId) {
+                socket.emit('leave_conversation', { conversation_id: currentConversationId });
+            }
+            currentConversationId = convId;
+            socket.emit('join_conversation', { conversation_id: convId });
+            document.getElementById('currentConversation').textContent = 
+                `Conversation #${convId}`;
+            document.getElementById('messagesContainer').innerHTML = '';
+            renderConversations();
+        }
+
+        function renderMessages(messages) {
+            const container = document.getElementById('messagesContainer');
+            container.innerHTML = messages.map(msg => `
+                <div class="message ${msg.sender}">
+                    <div>${msg.content}</div>
+                    <div class="message-info">${msg.created_at}</div>
+                </div>
+            `).join('');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function addMessage(message) {
+            console.log('addMessage called with:', message);
+            const container = document.getElementById('messagesContainer');
+            if (!container) {
+                console.error('Messages container not found!');
+                return;
+            }
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${message.sender}`;
+            msgDiv.innerHTML = `
+                <div>${message.content}</div>
+                <div class="message-info">${message.created_at || new Date().toLocaleString('vi-VN')}</div>
+            `;
+            container.appendChild(msgDiv);
+            container.scrollTop = container.scrollHeight;
+            console.log('Message added to UI');
+        }
+
+        function sendMessage() {
+            if (!currentConversationId) {
+                alert('Vui lòng chọn hoặc tạo conversation trước');
+                return;
+            }
+
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+
+            // Add user message to UI immediately
+            addMessage({
+                sender: 'user',
+                content: message,
+                created_at: new Date().toLocaleString('vi-VN')
+            });
+
+            socket.emit('send_message', {
+                conversation_id: currentConversationId,
+                message: message
+            });
+
+            input.value = '';
+        }
+
+        function logout() {
+            if (socket) socket.disconnect();
+            token = null;
+            currentConversationId = null;
+            document.getElementById('chatSection').style.display = 'none';
+            document.getElementById('loginSection').style.display = 'block';
+            document.getElementById('phoneInput').value = '';
+        }
+    </script>
+</body>
+</html>
